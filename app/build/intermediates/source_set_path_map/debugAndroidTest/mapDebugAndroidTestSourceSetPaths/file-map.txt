@@ -1,0 +1,4 @@
+com.example.musicplayer.test.app-androidTest-0 D:\test\KotlinMusicPlayer\app\build\generated\res\resValues\androidTest\debug
+com.example.musicplayer.test.app-mergeDebugAndroidTestResources-1 D:\test\KotlinMusicPlayer\app\build\intermediates\incremental\debugAndroidTest\mergeDebugAndroidTestResources\merged.dir
+com.example.musicplayer.test.app-mergeDebugAndroidTestResources-2 D:\test\KotlinMusicPlayer\app\build\intermediates\incremental\debugAndroidTest\mergeDebugAndroidTestResources\stripped.dir
+com.example.musicplayer.test.app-debugAndroidTest-3 D:\test\KotlinMusicPlayer\app\build\intermediates\merged_res\debugAndroidTest\mergeDebugAndroidTestResources
