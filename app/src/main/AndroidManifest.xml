@@ -50,5 +50,26 @@
                 <action android:name="android.media.browse.MediaBrowserService" />
             </intent-filter>
         </service>
+
+        <receiver
+            android:name=".player.PlayControlReceiver"
+            android:enabled="true"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.example.musicplayer.TOGGLE_PLAY" />
+                <action android:name="com.example.musicplayer.NEXT" />
+                <action android:name="com.example.musicplayer.PREV" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Optional: Xiaomi HyperOS Super Island configuration -->
+        <!--
+        <meta-data
+            android:name="com.xiaomi.xms.APP_ID"
+            android:value="your_xiaomi_app_id" />
+        <meta-data
+            android:name="com.xiaomi.xms.BUILD_TYPE_DEBUG"
+            android:value="false" />
+        -->
     </application>
 </manifest>

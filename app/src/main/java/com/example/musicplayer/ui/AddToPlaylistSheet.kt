@@ -1,3 +1,9 @@
+/*
+ * Author: lihaihua
+ * Config: ai coding
+ * Repository: https://github.com/gamelifes/music-player-android.git
+ */
+
 package com.example.musicplayer.ui
 
 import androidx.compose.foundation.clickable

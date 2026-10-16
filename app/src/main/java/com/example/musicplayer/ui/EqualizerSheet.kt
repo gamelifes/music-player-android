@@ -1,4 +1,11 @@
+/*
+ * Author: lihaihua
+ * Config: ai coding
+ * Repository: https://github.com/gamelifes/music-player-android.git
+ */
+
 @file:androidx.annotation.OptIn(markerClass = [androidx.media3.common.util.UnstableApi::class])
+
 package com.example.musicplayer.ui
 
 import androidx.compose.foundation.horizontalScroll
