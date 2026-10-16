@@ -295,6 +295,18 @@ object PlaybackEngine {
         player?.seekToPreviousMediaItem()
     }
 
+    /** 用于耳机按键/媒体按钮：确保服务在后台运行并执行切歌 */
+    fun next(context: Context) {
+        startPlaybackService(context)
+        player?.seekToNextMediaItem()
+    }
+
+    /** 用于耳机按键/媒体按钮：确保服务在后台运行并执行切歌 */
+    fun previous(context: Context) {
+        startPlaybackService(context)
+        player?.seekToPreviousMediaItem()
+    }
+
     /**
      * 主动跳过当前曲（拉黑等场景）。
      * 有下一首（或 REPEAT_ALL 可回绕）则切过去；REPEAT_OFF 且在末首时

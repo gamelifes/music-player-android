@@ -13,6 +13,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -55,6 +56,9 @@ class MainActivity : ComponentActivity() {
         installSplashScreen()
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
+        // 主动申请「音乐播放器」系统角色（Android 10+）
+        requestMusicPlayerRoleIfNeeded()
 
         setContent {
             MusicTheme {
@@ -152,6 +156,45 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             }
+        }
+    }
+
+    /**
+     * 主动申请「音乐播放器」系统角色，让 HyperOS/小米能识别为默认播放器。
+     * Android 10+ 通过 RoleManager 申请 ROLE_MUSIC_PLAYER，
+     * 若角色不可用（如 Android 15 SDK 未定义该常量），则引导到系统默认应用设置页。
+     */
+    private fun requestMusicPlayerRoleIfNeeded() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
+
+        val roleManager = getSystemService(android.app.role.RoleManager::class.java) ?: run {
+            openMusicPlayerSettings()
+            return
+        }
+
+        val role = "android.app.role.role_music_player"
+        try {
+            // 通过反射获取 ROLE_MUSIC_PLAYER 常量（部分定制 ROM 可能定义）
+            val roleField = android.app.role.RoleManager::class.java.getField("ROLE_MUSIC_PLAYER")
+            val roleName = roleField.get(null) as String
+            if (roleManager.isRoleAvailable(roleName) && !roleManager.isRoleHeld(roleName)) {
+                startActivity(roleManager.createRequestRoleIntent(roleName))
+            }
+        } catch (e: Exception) {
+            // 标准 AOSP 没有 ROLE_MUSIC_PLAYER，引导到系统默认应用设置
+            openMusicPlayerSettings()
+        }
+    }
+
+    private fun openMusicPlayerSettings() {
+        val intent = Intent(Settings.ACTION_SETTINGS).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        try {
+            Toast.makeText(this, "请前往 设置 → 默认应用 → 音乐播放器 选择本应用", Toast.LENGTH_LONG).show()
+            startActivity(intent)
+        } catch (e: Exception) {
+            Toast.makeText(this, "请在系统设置中找到默认音乐播放器并选择本应用", Toast.LENGTH_LONG).show()
         }
     }
 

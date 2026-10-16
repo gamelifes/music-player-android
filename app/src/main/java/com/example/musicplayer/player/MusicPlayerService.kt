@@ -10,6 +10,7 @@ package com.example.musicplayer.player
 
 import android.app.PendingIntent
 import android.content.Intent
+import android.os.IBinder
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import com.example.musicplayer.MainActivity
@@ -44,6 +45,11 @@ class MusicPlayerService : MediaSessionService() {
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = mediaSession
 
     private var userRequestedStop = false
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        super.onStartCommand(intent, flags, startId)
+        return START_STICKY
+    }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
         // 用户从最近任务划掉应用：无论是否正在播放，都完全关闭
