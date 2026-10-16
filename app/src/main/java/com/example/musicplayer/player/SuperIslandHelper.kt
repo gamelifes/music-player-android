@@ -9,12 +9,12 @@ package com.example.musicplayer.player
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
+import android.content.Intent
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import androidx.core.app.NotificationCompat
-import androidx.core.app.PendingIntentCompat
 import com.example.musicplayer.R
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -96,6 +96,10 @@ object SuperIslandHelper {
 
         val islandParamsJson = buildIslandParamsJson(playInfo, isPlaying, positionMs, durationMs)
 
+        val extrasBundle = Bundle().apply {
+            putString("miui.focus.param", islandParamsJson)
+        }
+
         val builder = NotificationCompat.Builder(context, CHANNEL_ID)
             .setContentTitle(title)
             .setContentText(artist)
@@ -103,44 +107,44 @@ object SuperIslandHelper {
             .setOngoing(isPlaying)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
-            .addExtras("miui.focus.param", islandParamsJson)
+            .addExtras(extrasBundle)
 
         playInfo.albumArtUri?.let { uri ->
             try {
                 context.contentResolver.openInputStream(uri)?.use { stream ->
                     BitmapFactory.decodeStream(stream)?.let { bitmap ->
                         builder.setLargeIcon(bitmap)
-                        builder.addExtras("miui.focus.pic_aod", bitmap)
-                        builder.addExtras("miui.focus.pic_image", bitmap)
-                        builder.addExtras("miui.focus.pic_highlight", bitmap)
+                        extrasBundle.putParcelable("miui.focus.pic_aod", bitmap)
+                        extrasBundle.putParcelable("miui.focus.pic_image", bitmap)
+                        extrasBundle.putParcelable("miui.focus.pic_highlight", bitmap)
                     }
                 }
             } catch (e: Exception) {
             }
         }
 
-        val toggleIntent = android.content.Intent(context, PlayControlReceiver::class.java).apply {
+        val toggleIntent = Intent(context, PlayControlReceiver::class.java).apply {
             action = PlayControlReceiver.ACTION_TOGGLE_PLAY
         }
-        val togglePending = PendingIntentCompat.getBroadcast(
+        val togglePending = android.app.PendingIntent.getBroadcast(
             context, 1, toggleIntent,
-            PendingIntentCompat.FLAG_IMMUTABLE or PendingIntentCompat.FLAG_UPDATE_CURRENT
+            android.app.PendingIntent.FLAG_IMMUTABLE or android.app.PendingIntent.FLAG_UPDATE_CURRENT
         )
 
-        val nextIntent = android.content.Intent(context, PlayControlReceiver::class.java).apply {
+        val nextIntent = Intent(context, PlayControlReceiver::class.java).apply {
             action = PlayControlReceiver.ACTION_NEXT
         }
-        val nextPending = PendingIntentCompat.getBroadcast(
+        val nextPending = android.app.PendingIntent.getBroadcast(
             context, 2, nextIntent,
-            PendingIntentCompat.FLAG_IMMUTABLE or PendingIntentCompat.FLAG_UPDATE_CURRENT
+            android.app.PendingIntent.FLAG_IMMUTABLE or android.app.PendingIntent.FLAG_UPDATE_CURRENT
         )
 
-        val prevIntent = android.content.Intent(context, PlayControlReceiver::class.java).apply {
+        val prevIntent = Intent(context, PlayControlReceiver::class.java).apply {
             action = PlayControlReceiver.ACTION_PREV
         }
-        val prevPending = PendingIntentCompat.getBroadcast(
+        val prevPending = android.app.PendingIntent.getBroadcast(
             context, 3, prevIntent,
-            PendingIntentCompat.FLAG_IMMUTABLE or PendingIntentCompat.FLAG_UPDATE_CURRENT
+            android.app.PendingIntent.FLAG_IMMUTABLE or android.app.PendingIntent.FLAG_UPDATE_CURRENT
         )
 
         val actionsBundle = Bundle().apply {
@@ -148,7 +152,7 @@ object SuperIslandHelper {
             putParcelable("miui.focus.action_next", nextPending)
             putParcelable("miui.focus.action_prev", prevPending)
         }
-        builder.addExtras("miui.focus.actions", actionsBundle)
+        extrasBundle.putBundle("miui.focus.actions", actionsBundle)
 
         notificationManager.notify(NOTIFICATION_ID, builder.build())
     }

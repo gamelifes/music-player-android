@@ -8,3 +8,7 @@
 -keep class com.example.musicplayer.player.TenBandEqualizerProcessor$Companion { *; }
 -keep class com.example.musicplayer.player.TenBandEqualizerProcessor$Preset { *; }
 -keep class com.example.musicplayer.player.MusicPlayerService { *; }
+-keep class com.example.musicplayer.player.SuperIslandHelper { *; }
+-keep class com.example.musicplayer.player.SuperIslandHelper$PlayInfo { *; }
+-keep class com.example.musicplayer.player.PlayControlReceiver { *; }
+-keep class com.example.musicplayer.player.PlayControlReceiver$* { *; }
