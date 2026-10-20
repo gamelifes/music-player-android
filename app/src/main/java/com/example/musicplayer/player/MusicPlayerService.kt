@@ -10,12 +10,17 @@ package com.example.musicplayer.player
 
 import android.app.PendingIntent
 import android.content.Intent
-import android.os.IBinder
+import androidx.media3.session.DefaultMediaNotificationProvider
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import com.example.musicplayer.MainActivity
+import com.example.musicplayer.R
 
 private const val TAG = "MusicPlayerService"
+private const val CHANNEL_ID = "music_playback"
+
+/** 通知 id：不能和 SuperIslandHelper 的 1001 冲突，否则两条通知会互相覆盖 */
+private const val NOTIFICATION_ID = 1002
 
 /**
  * 前台播放服务：负责 MediaSession（通知栏、锁屏、耳机/车机控制）以及播放保活。
@@ -35,9 +40,27 @@ class MusicPlayerService : MediaSessionService() {
             Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
-        mediaSession = MediaSession.Builder(this, player)
+        val session = MediaSession.Builder(this, player)
             .setSessionActivity(sessionActivity)
             .build()
+        mediaSession = session
+
+        // 通知栏「播放卡片」交给 media3 生成：自带播放/暂停/上一首/下一首按钮
+        val notificationProvider = DefaultMediaNotificationProvider.Builder(this)
+            .setNotificationId(NOTIFICATION_ID)
+            .setChannelId(CHANNEL_ID)
+            .setChannelName(R.string.playback_channel_name)
+            .build()
+        notificationProvider.setSmallIcon(R.drawable.ic_music_note)
+        setMediaNotificationProvider(notificationProvider)
+
+        // 关键：必须 addSession。
+        // 只有把 session 登记到 Service 上，media3 才会接管
+        // 「通知栏播放卡片」与「前台服务提升(startForeground)」。
+        // 否则这个服务只是普通后台服务：应用切到其他应用后会被系统
+        // （HyperOS/MIUI 尤其激进）回收，onDestroy 里 release 掉 session，
+        // 系统媒体卡片也就跟着消失了。
+        addSession(session)
 
         SuperIslandHelper.startObserving(applicationContext)
     }
@@ -61,8 +84,13 @@ class MusicPlayerService : MediaSessionService() {
         SuperIslandHelper.stopObserving()
         SuperIslandHelper.cancelNotification(this)
 
-        val player = mediaSession?.player
-        mediaSession?.release()
+        val session = mediaSession
+        val player = session?.player
+        if (session != null) {
+            // 先从 Service 上摘掉，media3 才会同步撤掉通知与前台状态
+            runCatching { removeSession(session) }
+            session.release()
+        }
         mediaSession = null
 
         if (userRequestedStop) {

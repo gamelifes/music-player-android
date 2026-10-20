@@ -242,23 +242,38 @@ object PlaybackEngine {
     }
 
     fun play(context: Context) {
+        val exo = ensurePlayer(context)
+        // 先进入播放态再拉服务：
+        // 服务起来时 media3 会看 playWhenReady + 播放状态，
+        // 已经是播放态才会立刻 startForeground，通知栏的播放卡片马上出现。
+        exo.play()
         startPlaybackService(context)
-        ensurePlayer(context).play()
     }
 
-    /** 启动前台服务，拿到 MediaSession 与通知栏控制 */
+    /**
+     * 启动前台播放服务，拿到 MediaSession 与通知栏控制。
+     *
+     * 这里用普通 startService 而不是 startForegroundService：
+     * media3 在「开始播放」时会自己把服务提升为前台服务
+     * （MediaNotificationManager 内部会 startForegroundService + startForeground），
+     * 这样即使遇到空队列/坏文件导致没能及时提升前台，
+     * 也不会因为 startForegroundService 未在 5 秒内调用 startForeground 而被系统判超时。
+     */
     private fun startPlaybackService(context: Context) {
         // 不能用 serviceStarted 提前返回：
         // 服务被系统/用户划掉后该标志仍为 true，会导致再也起不来 → 真机上播放停摆
-        runCatching {
-            context.startService(Intent(context, MusicPlayerService::class.java))
-            serviceStarted = true
-        }.onFailure {
+        val intent = Intent(context, MusicPlayerService::class.java)
+        val started = runCatching {
+            context.startService(intent)
+            true
+        }.getOrElse {
+            // 后台启动受限（Android 8+）时退回前台服务启动方式
             runCatching {
-                ContextCompat.startForegroundService(context, Intent(context, MusicPlayerService::class.java))
-                serviceStarted = true
-            }
+                ContextCompat.startForegroundService(context, intent)
+                true
+            }.getOrDefault(false)
         }
+        serviceStarted = started
     }
 
     @Suppress("unused")
@@ -272,8 +287,8 @@ object PlaybackEngine {
         if (_state.value.isPlaying || exo.isPlaying) {
             exo.pause()
         } else {
-            startPlaybackService(context)
             exo.play()
+            startPlaybackService(context)
         }
     }
 

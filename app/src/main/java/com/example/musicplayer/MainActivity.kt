@@ -7,6 +7,7 @@
 package com.example.musicplayer
 
 import android.Manifest
+import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -17,6 +18,7 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -41,6 +43,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.musicplayer.player.DefaultPlayerHelper
 import com.example.musicplayer.ui.BlacklistScreen
 import com.example.musicplayer.ui.LibraryScreen
 import com.example.musicplayer.ui.MusicViewModel
@@ -52,13 +55,25 @@ import com.example.musicplayer.ui.theme.MusicTheme
 
 class MainActivity : ComponentActivity() {
 
+    /**
+     * 系统「音乐播放器」角色申请弹窗的结果。
+     * 必须在 Activity 进入 STARTED 之前注册，所以放在属性初始化里。
+     */
+    private val musicRoleLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            DefaultPlayerHelper.markRoleGranted(this)
+            toast("已设为默认音乐播放器")
+        } else {
+            toast("未获得默认播放器权限，可在系统设置里手动设置")
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-
-        // 主动申请「音乐播放器」系统角色（Android 10+）
-        requestMusicPlayerRoleIfNeeded()
 
         setContent {
             MusicTheme {
@@ -97,7 +112,11 @@ class MainActivity : ComponentActivity() {
                     // ViewModel init 里的 scanLibrary 可能跑在授权前，此时补一次，
                     // 保证「进歌单详情」时 allSongs 已就绪，不必先进曲库。
                     LaunchedEffect(audioGranted) {
-                        if (audioGranted) vm.scanLibrary()
+                        if (audioGranted) {
+                            vm.scanLibrary()
+                            // 仅在「确实还不是默认播放器」时才引导一次
+                            guideToDefaultPlayerIfNeeded()
+                        }
                     }
 
                     if (!audioGranted) {
@@ -160,42 +179,50 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * 主动申请「音乐播放器」系统角色，让 HyperOS/小米能识别为默认播放器。
-     * Android 10+ 通过 RoleManager 申请 ROLE_MUSIC_PLAYER，
-     * 若角色不可用（如 Android 15 SDK 未定义该常量），则引导到系统默认应用设置页。
+     * 默认播放器引导：
+     *  - 先问系统「本应用是不是默认音乐播放器」，已经是就直接跳过，不打扰用户；
+     *  - 系统提供「音乐播放器」角色时，弹系统的角色申请框；
+     *  - 没有该角色时（AOSP 就是如此），引导到系统「默认应用」页，且只提醒一次，
+     *    避免每次启动都被拽去设置。
      */
-    private fun requestMusicPlayerRoleIfNeeded() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
+    private fun guideToDefaultPlayerIfNeeded() {
+        if (DefaultPlayerHelper.isDefaultPlayer(this)) return
 
-        val roleManager = getSystemService(android.app.role.RoleManager::class.java) ?: run {
-            openMusicPlayerSettings()
-            return
+        val role = DefaultPlayerHelper.availableMusicRole(this)
+        if (role != null) {
+            val intent = DefaultPlayerHelper.createRoleRequestIntent(this, role)
+            if (intent != null) {
+                DefaultPlayerHelper.markPrompted(this)
+                val launched = runCatching { musicRoleLauncher.launch(intent) }.isSuccess
+                if (!launched) openDefaultAppsSettings()
+                return
+            }
         }
 
-        val role = "android.app.role.role_music_player"
-        try {
-            // 通过反射获取 ROLE_MUSIC_PLAYER 常量（部分定制 ROM 可能定义）
-            val roleField = android.app.role.RoleManager::class.java.getField("ROLE_MUSIC_PLAYER")
-            val roleName = roleField.get(null) as String
-            if (roleManager.isRoleAvailable(roleName) && !roleManager.isRoleHeld(roleName)) {
-                startActivity(roleManager.createRequestRoleIntent(roleName))
-            }
-        } catch (e: Exception) {
-            // 标准 AOSP 没有 ROLE_MUSIC_PLAYER，引导到系统默认应用设置
-            openMusicPlayerSettings()
+        if (DefaultPlayerHelper.shouldPrompt(this)) {
+            DefaultPlayerHelper.markPrompted(this)
+            openDefaultAppsSettings()
         }
     }
 
-    private fun openMusicPlayerSettings() {
-        val intent = Intent(Settings.ACTION_SETTINGS).apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    private fun openDefaultAppsSettings() {
+        val opened = runCatching {
+            startActivity(DefaultPlayerHelper.defaultAppsSettingsIntent())
+        }.isSuccess
+        if (!opened) {
+            runCatching {
+                startActivity(
+                    Intent(Settings.ACTION_SETTINGS).apply {
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                )
+            }
         }
-        try {
-            Toast.makeText(this, "请前往 设置 → 默认应用 → 音乐播放器 选择本应用", Toast.LENGTH_LONG).show()
-            startActivity(intent)
-        } catch (e: Exception) {
-            Toast.makeText(this, "请在系统设置中找到默认音乐播放器并选择本应用", Toast.LENGTH_LONG).show()
-        }
+        toast("请在「设置 → 默认应用 → 音乐播放器」中选择本应用")
+    }
+
+    private fun toast(message: String) {
+        Toast.makeText(this, message, Toast.LENGTH_LONG).show()
     }
 
     private fun audioPermission(): String =
