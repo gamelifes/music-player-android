@@ -76,6 +76,11 @@ object PlaybackEngine {
     private var positionTicker: Job? = null
     private var serviceStarted = false
 
+    /** 待应用到下一次创建的 ExoPlayer 实例上的持久化设置，保证重启后显示与实际一致 */
+    private var pendingVolume: Float = 1f
+    private var pendingShuffle: Boolean = false
+    private var pendingRepeatMode: Int = Player.REPEAT_MODE_OFF
+
     /** 一次 STATE_ENDED 只处理一次，防止 listener + ticker 双重触发 */
     private var endHandled = false
 
@@ -182,6 +187,11 @@ object PlaybackEngine {
         })
 
         player = exo
+        // 把重启前持久化的音量/随机/循环设置应用到新建的播放器，
+        // 避免"显示为上次状态、实际为默认值"的不一致。
+        exo.volume = pendingVolume
+        exo.shuffleModeEnabled = pendingShuffle
+        exo.repeatMode = pendingRepeatMode
         return exo
     }
 
@@ -362,20 +372,24 @@ object PlaybackEngine {
     }
 
     fun setVolume(volume: Float) {
-        player?.volume = volume.coerceIn(0f, 1f)
+        pendingVolume = volume.coerceIn(0f, 1f)
+        player?.volume = pendingVolume
     }
 
     fun setRepeatMode(mode: RepeatMode) {
         val exo = player ?: return
-        exo.repeatMode = when (mode) {
+        val exoMode = when (mode) {
             RepeatMode.OFF -> Player.REPEAT_MODE_OFF
             RepeatMode.ALL -> Player.REPEAT_MODE_ALL
             RepeatMode.ONE -> Player.REPEAT_MODE_ONE
         }
+        pendingRepeatMode = exoMode
+        exo.repeatMode = exoMode
         _state.update { it.copy(repeatMode = mode) }
     }
 
     fun setShuffle(enabled: Boolean) {
+        pendingShuffle = enabled
         player?.shuffleModeEnabled = enabled
         _state.update { it.copy(shuffle = enabled) }
     }
