@@ -182,8 +182,8 @@ class MainActivity : ComponentActivity() {
      * 默认播放器引导：
      *  - 先问系统「本应用是不是默认音乐播放器」，已经是就直接跳过，不打扰用户；
      *  - 系统提供「音乐播放器」角色时，弹系统的角色申请框；
-     *  - 没有该角色时（AOSP 就是如此），引导到系统「默认应用」页，且只提醒一次，
-     *    避免每次启动都被拽去设置。
+     *  - 没有该角色时（AOSP 就是如此），不再自动跳转系统「默认应用」页，
+     *    只提示用户可手动去设置，避免每次启动都被拽去设置。
      */
     private fun guideToDefaultPlayerIfNeeded() {
         if (DefaultPlayerHelper.isDefaultPlayer(this)) return
@@ -194,31 +194,15 @@ class MainActivity : ComponentActivity() {
             if (intent != null) {
                 DefaultPlayerHelper.markPrompted(this)
                 val launched = runCatching { musicRoleLauncher.launch(intent) }.isSuccess
-                if (!launched) openDefaultAppsSettings()
+                if (!launched) {
+                    toast("请在系统「默认应用 → 音乐播放器」中手动选择本应用")
+                }
                 return
             }
         }
 
-        if (DefaultPlayerHelper.shouldPrompt(this)) {
-            DefaultPlayerHelper.markPrompted(this)
-            openDefaultAppsSettings()
-        }
-    }
-
-    private fun openDefaultAppsSettings() {
-        val opened = runCatching {
-            startActivity(DefaultPlayerHelper.defaultAppsSettingsIntent())
-        }.isSuccess
-        if (!opened) {
-            runCatching {
-                startActivity(
-                    Intent(Settings.ACTION_SETTINGS).apply {
-                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    }
-                )
-            }
-        }
-        toast("请在「设置 → 默认应用 → 音乐播放器」中选择本应用")
+        DefaultPlayerHelper.markPrompted(this)
+        toast("请在系统「默认应用 → 音乐播放器」中手动选择本应用")
     }
 
     private fun toast(message: String) {
