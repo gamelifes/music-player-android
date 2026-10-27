@@ -85,7 +85,6 @@ class MusicPlayerService : MediaSessionService() {
         SuperIslandHelper.cancelNotification(this)
 
         val session = mediaSession
-        val player = session?.player
         if (session != null) {
             // 先从 Service 上摘掉，media3 才会同步撤掉通知与前台状态
             runCatching { removeSession(session) }
@@ -93,16 +92,9 @@ class MusicPlayerService : MediaSessionService() {
         }
         mediaSession = null
 
-        if (userRequestedStop) {
-            PlaybackEngine.release()
-        } else {
-            val stillPlaying = player != null && (player.playWhenReady || player.isPlaying)
-            if (stillPlaying) {
-                PlaybackEngine.notifyServiceDestroyed()
-            } else {
-                PlaybackEngine.release()
-            }
-        }
+        // 无论用户划掉还是系统/外部关闭，统一复位引擎状态，避免
+        // _state.isPlaying 残留导致下次启动时 togglePlayPause 判断反向。
+        PlaybackEngine.release()
         super.onDestroy()
     }
 }

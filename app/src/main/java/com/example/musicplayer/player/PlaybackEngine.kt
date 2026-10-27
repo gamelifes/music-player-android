@@ -187,6 +187,27 @@ object PlaybackEngine {
         })
 
         player = exo
+        // 若媒体项已丢失（例如服务 onDestroy 后重建），但队列尚在，则恢复媒体上下文。
+        // setMediaItems 后必须 prepare()，否则 mediaItemCount 可能仍为 0，
+        // 导致后续 togglePlayPause 提前返回而无法播放。
+        if (currentQueue.isNotEmpty() && exo.mediaItemCount == 0) {
+            val items = currentQueue.map { song ->
+                MediaItem.Builder()
+                    .setMediaId(song.id.toString())
+                    .setUri(song.contentUri)
+                    .setMediaMetadata(
+                        MediaMetadata.Builder()
+                            .setTitle(song.title)
+                            .setArtist(song.artist)
+                            .setAlbumTitle(song.album)
+                            .setArtworkUri(song.albumArtUri)
+                            .build()
+                    )
+                    .build()
+            }
+            exo.setMediaItems(items, currentIndex().coerceAtLeast(0), 0L)
+            exo.prepare()
+        }
         // 把重启前持久化的音量/随机/循环设置应用到新建的播放器，
         // 避免"显示为上次状态、实际为默认值"的不一致。
         exo.volume = pendingVolume
@@ -246,7 +267,8 @@ object PlaybackEngine {
         _state.update {
             it.copy(
                 currentIndex = startIndex.coerceAtLeast(0),
-                positionMs = positionMs.coerceAtLeast(0L)
+                positionMs = positionMs.coerceAtLeast(0L),
+                isPlaying = false // 仅恢复队列，不自动播放
             )
         }
     }
@@ -293,13 +315,39 @@ object PlaybackEngine {
 
     fun togglePlayPause(context: Context) {
         val exo = ensurePlayer(context)
-        // 与 UI 渲染同源：都用 _state.isPlaying，避免"显示播放实际暂停"的错觉
-        if (_state.value.isPlaying || exo.isPlaying) {
+        // 无队列时无法播放，直接返回
+        if (currentQueue.isEmpty()) return
+        // 正在播放 -> 暂停
+        if (exo.isPlaying) {
             exo.pause()
-        } else {
-            exo.play()
-            startPlaybackService(context)
+            return
         }
+        // 未在播放：先确保媒体项存在且 player 已 prepare。
+        // 关闭灵动岛/服务挂起后，ExoPlayer 可能进入 STATE_IDLE 或媒体项被回收，
+        // 此时直接 play() 只设置 playWhenReady，不会真正开始播放；
+        // 系统播放卡片走 MediaSession 时 Media3 会自动做这一步，所以它能续播。
+        if (exo.mediaItemCount == 0) {
+            val items = currentQueue.map { song ->
+                MediaItem.Builder()
+                    .setMediaId(song.id.toString())
+                    .setUri(song.contentUri)
+                    .setMediaMetadata(
+                        MediaMetadata.Builder()
+                            .setTitle(song.title)
+                            .setArtist(song.artist)
+                            .setAlbumTitle(song.album)
+                            .setArtworkUri(song.albumArtUri)
+                            .build()
+                    )
+                    .build()
+            }
+            exo.setMediaItems(items, currentIndex().coerceAtLeast(0), 0L)
+        }
+        if (exo.playbackState == Player.STATE_IDLE) {
+            exo.prepare()
+        }
+        exo.play()
+        startPlaybackService(context)
     }
 
     fun seekTo(positionMs: Long) {
@@ -403,10 +451,17 @@ object PlaybackEngine {
         stopTicker()
         player?.release()
         player = null
-        currentQueue = emptyList()
+        // 不清空 currentQueue：保留队列供 restoreQueue / togglePlayPause 快速恢复，
+        // 避免服务 onDestroy 后重新打开应用时队列丢失，导致播放按钮无反应。
         serviceStarted = false
         endHandled = false
         skipHops = 0
+        resetState()
+    }
+
+    /** 重置播放状态流，避免服务/引擎释放后 _state.isPlaying 残留为 true。 */
+    private fun resetState() {
+        _state.value = EngineState()
     }
 
     // ---------------------------------------------------------- 播放结束处理
