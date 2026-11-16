@@ -8,8 +8,12 @@
 
 package com.example.musicplayer.player
 
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Intent
+import android.os.Build
 import androidx.media3.session.DefaultMediaNotificationProvider
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
@@ -17,7 +21,18 @@ import com.example.musicplayer.MainActivity
 import com.example.musicplayer.R
 
 private const val TAG = "MusicPlayerService"
-private const val CHANNEL_ID = "music_playback"
+
+/**
+ * 播放通知渠道。
+ *
+ * 用 v2 是为了绕开旧版本可能留下的高优先级渠道：
+ * Android 在渠道创建后不允许应用再改 importance，
+ * 只能换一个新 ID 重新以 IMPORTANCE_LOW 创建。
+ * LOW = 通知栏/锁屏/媒体卡片都在，但不会弹横幅、不响铃。
+ */
+private const val CHANNEL_ID = "music_playback_v2"
+private const val LEGACY_CHANNEL_ID = "music_playback"
+private const val LEGACY_MEDIA3_CHANNEL_ID = "default_channel_id"
 
 /** 通知 id：不能和 SuperIslandHelper 的 1001 冲突，否则两条通知会互相覆盖 */
 private const val NOTIFICATION_ID = 1002
@@ -45,6 +60,10 @@ class MusicPlayerService : MediaSessionService() {
             .build()
         mediaSession = session
 
+        // 先建低优先级渠道，再交给 media3 发通知。
+        // 这样前台服务、媒体卡片、锁屏控制都保留，只是不弹横幅。
+        ensureSilentPlaybackChannel()
+
         // 通知栏「播放卡片」交给 media3 生成：自带播放/暂停/上一首/下一首按钮
         val notificationProvider = DefaultMediaNotificationProvider.Builder(this)
             .setNotificationId(NOTIFICATION_ID)
@@ -66,6 +85,36 @@ class MusicPlayerService : MediaSessionService() {
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = mediaSession
+
+    /**
+     * 前台服务需要的通知渠道，固定 IMPORTANCE_LOW：
+     * - 不弹横幅、不响、不震；
+     * - 通知栏媒体卡片、锁屏控制、前台服务保活都不受影响；
+     * - 不影响 SuperIslandHelper 自己的那条「灵动岛」通知。
+     *
+     * 旧渠道（music_playback / Media3 默认 default_channel_id）如果曾被创建成
+     * 高优先级，importance 改不回来，所以这里直接删掉，换 v2 重新建。
+     */
+    private fun ensureSilentPlaybackChannel() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        val manager = getSystemService(NotificationManager::class.java) ?: return
+
+        manager.deleteNotificationChannel(LEGACY_CHANNEL_ID)
+        manager.deleteNotificationChannel(LEGACY_MEDIA3_CHANNEL_ID)
+
+        val channel = NotificationChannel(
+            CHANNEL_ID,
+            getString(R.string.playback_channel_name),
+            NotificationManager.IMPORTANCE_LOW
+        ).apply {
+            description = "播放控制与歌曲信息，仅显示在通知栏/锁屏，不弹出横幅"
+            setShowBadge(false)
+            setSound(null, null)
+            enableVibration(false)
+            lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+        }
+        manager.createNotificationChannel(channel)
+    }
 
     private var userRequestedStop = false
 

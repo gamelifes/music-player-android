@@ -37,6 +37,9 @@ class PlaybackPrefs(private val context: Context) {
         val SHUFFLE = androidx.datastore.preferences.core.booleanPreferencesKey("last_shuffle")
         val REPEAT_MODE = stringPreferencesKey("last_repeat_mode")
         val VOLUME = floatPreferencesKey("last_volume")
+        val THEME_ID = stringPreferencesKey("theme_id")
+        val BACKGROUND_MODE = stringPreferencesKey("background_mode")
+        val BACKGROUND_COLOR = longPreferencesKey("background_color")
 
         // 均衡器：开关 + 10 段增益 + 预衰减
         val EQ_ENABLED = androidx.datastore.preferences.core.booleanPreferencesKey("eq_enabled")
@@ -52,6 +55,9 @@ class PlaybackPrefs(private val context: Context) {
         val shuffle: Boolean = false,
         val repeatMode: RepeatMode = RepeatMode.OFF,
         val volume: Float = 1f,
+        val themeId: String? = null,
+        val backgroundMode: String? = null,
+        val backgroundColor: Long? = null,
         val eqEnabled: Boolean = false,
         val eqGains: List<Float> = emptyList(),
         val eqPreampDb: Float = 0f,
@@ -70,6 +76,9 @@ class PlaybackPrefs(private val context: Context) {
                 RepeatMode.valueOf(p[Keys.REPEAT_MODE] ?: RepeatMode.OFF.name)
             }.getOrDefault(RepeatMode.OFF),
             volume = p[Keys.VOLUME] ?: 1f,
+            themeId = p[Keys.THEME_ID],
+            backgroundMode = p[Keys.BACKGROUND_MODE],
+            backgroundColor = p[Keys.BACKGROUND_COLOR],
             eqEnabled = p[Keys.EQ_ENABLED] ?: false,
             eqGains = p[Keys.EQ_GAINS]
                 ?.split(',')
@@ -112,6 +121,23 @@ class PlaybackPrefs(private val context: Context) {
             p[Keys.EQ_ENABLED] = enabled
             p[Keys.EQ_GAINS] = gains.joinToString(",")
             p[Keys.EQ_PREAMP] = preampDb
+        }
+    }
+
+    /** 保存主题 ID；切换主题只写这一个键，不碰播放状态 */
+    suspend fun saveTheme(id: String) {
+        context.playbackDataStore.edit { p ->
+            p[Keys.THEME_ID] = id
+        }
+    }
+
+    /** 保存背景色：mode = auto/custom；color 同时保留，切回自定义时能恢复上次颜色 */
+    suspend fun saveBackground(mode: String, colorArgb: Long?) {
+        context.playbackDataStore.edit { p ->
+            p[Keys.BACKGROUND_MODE] = mode
+            if (colorArgb != null) {
+                p[Keys.BACKGROUND_COLOR] = colorArgb
+            }
         }
     }
 

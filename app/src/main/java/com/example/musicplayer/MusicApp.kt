@@ -17,6 +17,9 @@ class MusicApp : Application() {
     companion object {
         lateinit var instance: MusicApp
             private set
+
+        /** 进程启动时刻，只用于启动耗时诊断（SplashTiming 日志）。 */
+        val startMs = android.os.SystemClock.uptimeMillis()
     }
 
     override fun onCreate() {

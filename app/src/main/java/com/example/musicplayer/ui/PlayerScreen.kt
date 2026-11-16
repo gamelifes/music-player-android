@@ -24,7 +24,9 @@ import androidx.compose.foundation.background
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.QueueMusic
 import androidx.compose.material.icons.automirrored.filled.VolumeDown
+import androidx.compose.material.icons.automirrored.filled.VolumeOff
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material.icons.filled.Album
 import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.filled.Equalizer
 import androidx.compose.material.icons.filled.LibraryMusic
@@ -33,6 +35,7 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material.icons.filled.RepeatOne
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
@@ -42,8 +45,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -69,6 +70,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.platform.LocalContext
 import coil.compose.AsyncImage
 import com.example.musicplayer.data.RepeatMode
+import com.example.musicplayer.ui.theme.isLightBackground
 import java.util.Locale
 
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
@@ -86,6 +88,11 @@ fun PlayerScreen(
     var showEq by remember { mutableStateOf(false) }
     var isScrubbing by remember { mutableStateOf(false) }
     var scrubPosition by remember { mutableFloatStateOf(0f) }
+
+    // 启动页动画的播放时机：面板里点一下立即落盘，下次冷启动生效
+    val context = LocalContext.current
+    var showSettings by remember { mutableStateOf(false) }
+    var splashMode by remember { mutableStateOf(SplashGate.mode(context)) }
 
     // duration 单一来源：ExoPlayer 回报的真实时长；仅在它还没解析出来时
     // 才短暂兜底 MediaStore 元数据。真实值一旦到位立即覆盖，不会半途跳变。
@@ -115,11 +122,22 @@ fun PlayerScreen(
                     }
                 },
                 actions = {
+                    // 歌词/封面切换放第一位：它是播放页最常用的动作
                     IconButton(onClick = { showLyrics = !showLyrics }) {
                         Icon(
-                            imageVector = Icons.Filled.Lyrics,
+                            // 图标说"点一下会得到什么"：正在显示封面 → 歌词图标
+                            imageVector = if (showLyrics) Icons.Filled.Album else Icons.Filled.Lyrics,
                             contentDescription = if (showLyrics) "显示封面" else "显示歌词",
                             tint = if (showLyrics) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    // 主色/背景已经并进设置面板，这里不再单独放调色板
+                    IconButton(onClick = { showSettings = true }) {
+                        Icon(
+                            imageVector = Icons.Filled.Settings,
+                            contentDescription = "设置",
+                            tint = if (showSettings) MaterialTheme.colorScheme.primary
                             else MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
@@ -128,10 +146,9 @@ fun PlayerScreen(
         },
         bottomBar = {
             BottomAppBar(
-                containerColor = MaterialTheme.colorScheme.surface,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp)
+                containerColor = Color.Transparent,
+                tonalElevation = 0.dp,
+                modifier = Modifier.fillMaxWidth()
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -231,68 +248,24 @@ fun PlayerScreen(
                     )
                 }
 
-                Spacer(Modifier.height(16.dp))
+                Spacer(Modifier.height(24.dp))
 
-                // duration 与 fraction 用同一个快照算，避免拖动过程中区间漂移
-                val durationRange = durationMs.toFloat().coerceAtLeast(1f)
-                val safePosition = positionMs.coerceIn(0L, durationMs)
-                val playedFraction = (safePosition.toFloat() / durationRange).coerceIn(0f, 1f)
-
-                Box(modifier = Modifier.fillMaxWidth()) {
-                    // Background track
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(6.dp)
-                            .align(Alignment.Center)
-                            .clip(RoundedCornerShape(3.dp))
-                            .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
-                    )
-                    // Buffered segment：仅当缓冲明显领先于播放位置时才显示（流媒体场景）
-                    if (showBuffered) {
-                        val bufferedFraction =
-                            (engine.bufferedMs.toFloat() / durationRange).coerceIn(0f, 1f)
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth(bufferedFraction)
-                                .height(6.dp)
-                                .align(Alignment.CenterStart)
-                                .clip(RoundedCornerShape(3.dp))
-                                .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.2f))
-                        )
-                    }
-                    // Played segment
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth(playedFraction)
-                            .height(6.dp)
-                            .align(Alignment.CenterStart)
-                            .clip(RoundedCornerShape(3.dp))
-                            .background(MaterialTheme.colorScheme.primary)
-                    )
-                    // Transparent slider for drag interaction
-                    Slider(
-                        value = safePosition.toFloat(),
-                        onValueChange = {
-                            isScrubbing = true
-                            scrubPosition = it
-                        },
-                        onValueChangeFinished = {
-                            viewModel.seekTo(scrubPosition.toLong())
-                            isScrubbing = false
-                        },
-                        valueRange = 0f..durationRange,
-                        enabled = durationMs > 0,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .align(Alignment.Center),
-                        colors = SliderDefaults.colors(
-                            thumbColor = Color.Transparent,
-                            activeTrackColor = Color.Transparent,
-                            inactiveTrackColor = Color.Transparent
-                        )
-                    )
-                }
+                // S4 细线进度：视觉 2dp，拖拽时才出现滑块 + 时间气泡
+                ThinSeekBar(
+                    positionMs = positionMs,
+                    durationMs = durationMs,
+                    bufferedMs = if (showBuffered) engine.bufferedMs else 0L,
+                    isScrubbing = isScrubbing,
+                    onScrub = {
+                        isScrubbing = true
+                        scrubPosition = it.toFloat()
+                    },
+                    onScrubFinished = {
+                        viewModel.seekTo(it)
+                        isScrubbing = false
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                )
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -304,26 +277,43 @@ fun PlayerScreen(
 
                 Spacer(Modifier.height(4.dp))
 
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        Icons.AutoMirrored.Filled.VolumeDown,
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Slider(
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // 左图标：一键静音；右图标：一键满音量
+                    IconButton(
+                        onClick = { viewModel.updateVolume(0f) },
+                        modifier = Modifier.size(40.dp)
+                    ) {
+                        Icon(
+                            imageVector = if (viewModel.volume <= 0f) Icons.AutoMirrored.Filled.VolumeOff
+                            else Icons.AutoMirrored.Filled.VolumeDown,
+                            contentDescription = "静音",
+                            modifier = Modifier.size(18.dp),
+                            tint = if (viewModel.volume <= 0f) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    SegmentVolumeBar(
                         value = viewModel.volume,
                         onValueChange = viewModel::updateVolume,
                         modifier = Modifier
                             .weight(1f)
-                            .padding(horizontal = 8.dp)
+                            .padding(horizontal = 4.dp)
                     )
-                    Icon(
-                        Icons.AutoMirrored.Filled.VolumeUp,
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    IconButton(
+                        onClick = { viewModel.updateVolume(1f) },
+                        modifier = Modifier.size(40.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.VolumeUp,
+                            contentDescription = "满音量",
+                            modifier = Modifier.size(18.dp),
+                            tint = if (viewModel.volume >= 1f) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
 
                 Spacer(Modifier.height(8.dp))
@@ -334,7 +324,15 @@ fun PlayerScreen(
                     horizontalArrangement = Arrangement.SpaceEvenly,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    IconButton(onClick = viewModel::toggleShuffle) {
+                    IconButton(
+                        onClick = viewModel::toggleShuffle,
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .background(
+                                if (engine.shuffle) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                                else Color.Transparent
+                            )
+                    ) {
                         Icon(
                             Icons.Filled.Shuffle,
                             contentDescription = "随机播放",
@@ -342,7 +340,16 @@ fun PlayerScreen(
                             else MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                IconButton(onClick = viewModel::cycleRepeatMode) {
+                IconButton(
+                    onClick = viewModel::cycleRepeatMode,
+                    modifier = Modifier
+                        .clip(CircleShape)
+                        .background(
+                            if (engine.repeatMode != RepeatMode.OFF)
+                                MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                            else Color.Transparent
+                        )
+                ) {
                     Icon(
                         imageVector = if (engine.repeatMode == RepeatMode.ONE) Icons.Filled.RepeatOne
                         else Icons.Filled.Repeat,
@@ -353,7 +360,13 @@ fun PlayerScreen(
                 }
                 IconButton(
                     onClick = { showEq = true },
-                    modifier = Modifier.size(32.dp)
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .background(
+                            if (viewModel.eqEnabled) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                            else Color.Transparent
+                        )
                 ) {
                     Icon(
                         Icons.Filled.Equalizer,
@@ -388,6 +401,22 @@ fun PlayerScreen(
             }
         }
 
+        // 设置面板：外观（主色 / 背景）+ 启动页动画
+        if (showSettings) {
+            SettingsSheet(
+                selectedPalette = viewModel.palette,
+                customBackground = viewModel.customBackground,
+                splashMode = splashMode,
+                onSelectPalette = viewModel::applyPalette,
+                onApplyBackground = viewModel::applyBackground,
+                onSelectSplashMode = { mode ->
+                    splashMode = mode
+                    SplashGate.setMode(context, mode)
+                },
+                onDismiss = { showSettings = false }
+            )
+        }
+
         // 均衡器弹窗
         if (showEq) {
             val eqSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -404,6 +433,8 @@ fun PlayerScreen(
 @Composable
 private fun AlbumArt(albumArtUri: String?) {
     val shape = RoundedCornerShape(24.dp)
+    // 浅色底上，低透明度的粉彩会发灰；提高不透明度让占位封面保持色彩
+    val isLight = MaterialTheme.colorScheme.background.isLightBackground()
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -413,8 +444,8 @@ private fun AlbumArt(albumArtUri: String?) {
             .background(
                 Brush.linearGradient(
                     listOf(
-                        MaterialTheme.colorScheme.primary.copy(alpha = 0.55f),
-                        MaterialTheme.colorScheme.tertiary.copy(alpha = 0.45f)
+                        MaterialTheme.colorScheme.primary.copy(alpha = if (isLight) 0.82f else 0.55f),
+                        MaterialTheme.colorScheme.tertiary.copy(alpha = if (isLight) 0.72f else 0.45f)
                     )
                 )
             ),

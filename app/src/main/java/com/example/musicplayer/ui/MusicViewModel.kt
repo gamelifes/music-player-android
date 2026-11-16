@@ -13,6 +13,8 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.musicplayer.MusicApp
@@ -26,8 +28,10 @@ import com.example.musicplayer.data.db.PlaylistEntity
 import com.example.musicplayer.player.PlaybackEngine
 import com.example.musicplayer.player.TenBandEqualizerProcessor
 import com.example.musicplayer.player.TenBandEqualizerProcessor.Preset
+import com.example.musicplayer.ui.theme.AppPalette
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -54,6 +58,9 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
     /** 上次落盘的播放进度，避免每 200ms 的 tick 都写盘 */
     private var lastPersistedPosition = 0L
 
+    /** 音量落盘防抖：1% 精度拖动会高频回调，不能每帧写 DataStore */
+    private var volumeSaveJob: Job? = null
+
     // ------------------------------------------------------- Compose 状态
 
     var currentSong by mutableStateOf<Song?>(null)
@@ -61,6 +68,14 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
     var lyrics by mutableStateOf<List<LyricLine>>(emptyList())
         private set
     var volume by mutableFloatStateOf(1f)
+        private set
+
+    /** 当前主题，运行时切换；默认青瓷 */
+    var palette by mutableStateOf(AppPalette.CELADON)
+        private set
+
+    /** 自定义背景色；null = 跟随主题 */
+    var customBackground by mutableStateOf<Color?>(null)
         private set
     var isLoading by mutableStateOf(false)
         private set
@@ -273,6 +288,12 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
             PlaybackEngine.setShuffle(saved.shuffle)
             PlaybackEngine.setRepeatMode(saved.repeatMode)
             updateVolume(saved.volume)
+            palette = AppPalette.fromId(saved.themeId)
+            customBackground = if (saved.backgroundMode == "custom") {
+                Color((saved.backgroundColor ?: 0xFF0B1113L).toInt())
+            } else {
+                null
+            }
 
             // 均衡器恢复（默认关闭，全 0dB 直通）
             eqEnabled = saved.eqEnabled
@@ -283,6 +304,18 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
 
             startPositionPersistLoop()
         }
+
+        // 播放服务可能比 UI 活得久：退出再进时引擎里已经有队列和当前曲，
+        // 直接用引擎状态补 UI，避免出现「进度条有 6:12、标题却是未选择歌曲」。
+        syncCurrentSongFromEngine()
+    }
+
+    private fun syncCurrentSongFromEngine() {
+        if (currentSong != null) return
+        val queue = PlaybackEngine.getCurrentQueue()
+        val song = queue.getOrNull(PlaybackEngine.state.value.currentIndex) ?: return
+        currentSong = song
+        loadLyrics(song)
     }
 
     /** 每 5 秒节流落盘一次播放进度 */
@@ -444,9 +477,49 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun updateVolume(value: Float) {
-        volume = value.coerceIn(0f, 1f)
+        val next = value.coerceIn(0f, 1f)
+        if (next == volume) return
+        volume = next
         PlaybackEngine.setVolume(volume)
-        persistSettings()
+
+        // 250ms 防抖：拖动过程中只在停手后落盘一次
+        volumeSaveJob?.cancel()
+        volumeSaveJob = viewModelScope.launch {
+            delay(250)
+            runCatching {
+                playbackPrefs.saveSettings(
+                    shuffle = PlaybackEngine.state.value.shuffle,
+                    repeatMode = PlaybackEngine.state.value.repeatMode,
+                    volume = volume
+                )
+            }
+        }
+    }
+
+    /**
+     * 切换主题：只改内存状态 + 落盘主题 ID，
+     * 不触碰播放状态，切歌/播放中都可以安全切换。
+     */
+    fun applyPalette(palette: AppPalette) {
+        if (this.palette == palette) return
+        this.palette = palette
+        viewModelScope.launch {
+            runCatching { playbackPrefs.saveTheme(palette.id) }
+        }
+    }
+
+    /** 切换背景色；null = 跟随主题。只改配色，不影响播放 */
+    fun applyBackground(color: Color?) {
+        if (customBackground == color) return
+        customBackground = color
+        viewModelScope.launch {
+            runCatching {
+                playbackPrefs.saveBackground(
+                    mode = if (color == null) "auto" else "custom",
+                    colorArgb = color?.toArgb()?.toLong()?.and(0xFFFFFFFFL)
+                )
+            }
+        }
     }
 
     /** 播放设置变更后异步落盘 */

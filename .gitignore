@@ -9,3 +9,10 @@
 .cxx
 local.properties
 app/build
+
+# 设计过程产物（分镜 / 抽帧 / 实验 gif，共 200 MB 级）。只保留 design/splash 的
+# 说明、源图和脚本，用 git add -f 单独加进来：
+#   git add -f design/splash/README.md design/splash/assets/gen-*.png
+/design
+# 手动拷出来的测试包
+/dist
