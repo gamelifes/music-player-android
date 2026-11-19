@@ -201,16 +201,15 @@ class TenBandEqualizerProcessor : BaseAudioProcessor() {
             return
         }
 
-        logToFile("queueInput: processing audio, remaining=$remaining")
-
-
+        // 注意：这里是音频线程，每个缓冲区都会走一遍（约每 10~20ms 一次）。
+        // 绝对不能在这里做文件日志等同步 IO：磁盘抖动会让音频线程错过喂数
+        // 截止时间，轻则爆音卡顿，重则 AudioTrack 报错导致整首停止。
         val k = coeffs
         val st = states
         val preamp = preampLinear
         if (appliedEpoch != stateEpoch) {
             appliedEpoch = stateEpoch
             for (ch in st) for (band in ch) band.fill(0f)
-            logToFile("queueInput: filter states cleared due to epoch change")
         }
 
         try {
@@ -221,9 +220,8 @@ class TenBandEqualizerProcessor : BaseAudioProcessor() {
             }
         } catch (t: Throwable) {
             // 任何异常都不允许把坏缓冲交给框架：整段直通并 flip。
-
-             logToFile("DSP error, fallback to passthrough")
-             Log.w(TAG, "DSP error, fallback to passthrough", t)
+            // 只走 logcat，不写文件：持续报错时每个缓冲区都写一次文件会拖垮播放。
+            Log.w(TAG, "DSP error, fallback to passthrough", t)
             replaceOutputBuffer(remaining).put(inputBuffer).flip()
         }
     }

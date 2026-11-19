@@ -78,8 +78,13 @@ object PlaybackEngine {
 
     /** 待应用到下一次创建的 ExoPlayer 实例上的持久化设置，保证重启后显示与实际一致 */
     private var pendingVolume: Float = 1f
-    private var pendingShuffle: Boolean = false
-    private var pendingRepeatMode: Int = Player.REPEAT_MODE_OFF
+
+    /**
+     * 播放器被释放时（服务被系统回收、通知被划掉）记住的播放位置。
+     * 重新创建 ExoPlayer 时从这里续上，而不是回到第 0 首、0 秒。
+     */
+    private var resumeIndex: Int = 0
+    private var resumePositionMs: Long = 0L
 
     /** 一次 STATE_ENDED 只处理一次，防止 listener + ticker 双重触发 */
     private var endHandled = false
@@ -205,14 +210,16 @@ object PlaybackEngine {
                     )
                     .build()
             }
-            exo.setMediaItems(items, currentIndex().coerceAtLeast(0), 0L)
+            // 注意：这里 player 还没赋值，不能用 currentIndex() 取下标
+            // （恒为 -1 → 永远回到第 0 首）。用 release() 记下的位置续播。
+            exo.setMediaItems(items, resumeIndex.coerceIn(0, items.lastIndex), resumePositionMs)
             exo.prepare()
         }
-        // 把重启前持久化的音量/随机/循环设置应用到新建的播放器，
-        // 避免"显示为上次状态、实际为默认值"的不一致。
+        // 音量/随机/循环一律以 state 为唯一来源：即使播放器曾被释放，
+        // UI 上看到的模式也会原样作用到新实例上，不会出现「显示开、实际关」。
         exo.volume = pendingVolume
-        exo.shuffleModeEnabled = pendingShuffle
-        exo.repeatMode = pendingRepeatMode
+        exo.shuffleModeEnabled = _state.value.shuffle
+        exo.repeatMode = _state.value.repeatMode.toExoRepeatMode()
         return exo
     }
 
@@ -221,6 +228,8 @@ object PlaybackEngine {
     fun setQueue(context: Context, songs: List<Song>, startIndex: Int) {
         val exo = ensurePlayer(context)
         currentQueue = songs
+        resumeIndex = startIndex.coerceAtLeast(0)
+        resumePositionMs = 0L
         skipHops = 0
         val items = songs.map { song ->
             MediaItem.Builder()
@@ -247,6 +256,8 @@ object PlaybackEngine {
     fun restoreQueue(context: Context, songs: List<Song>, startIndex: Int, positionMs: Long) {
         val exo = ensurePlayer(context)
         currentQueue = songs
+        resumeIndex = startIndex.coerceAtLeast(0)
+        resumePositionMs = positionMs.coerceAtLeast(0L)
         skipHops = 0
         val items = songs.map { song ->
             MediaItem.Builder()
@@ -341,7 +352,7 @@ object PlaybackEngine {
                     )
                     .build()
             }
-            exo.setMediaItems(items, currentIndex().coerceAtLeast(0), 0L)
+            exo.setMediaItems(items, resumeIndex.coerceIn(0, items.lastIndex), resumePositionMs)
         }
         if (exo.playbackState == Player.STATE_IDLE) {
             exo.prepare()
@@ -425,21 +436,23 @@ object PlaybackEngine {
     }
 
     fun setRepeatMode(mode: RepeatMode) {
-        val exo = player ?: return
-        val exoMode = when (mode) {
-            RepeatMode.OFF -> Player.REPEAT_MODE_OFF
-            RepeatMode.ALL -> Player.REPEAT_MODE_ALL
-            RepeatMode.ONE -> Player.REPEAT_MODE_ONE
-        }
-        pendingRepeatMode = exoMode
-        exo.repeatMode = exoMode
+        // 先写 state，再同步给播放器。
+        // 播放器可能尚未创建（服务被系统回收后刚打开应用、还没点歌），
+        // 以前这里直接 return，导致循环按钮整个失灵；现在改为
+        // 「状态先生效，播放器创建时自动应用」。
         _state.update { it.copy(repeatMode = mode) }
+        player?.repeatMode = mode.toExoRepeatMode()
     }
 
     fun setShuffle(enabled: Boolean) {
-        pendingShuffle = enabled
-        player?.shuffleModeEnabled = enabled
         _state.update { it.copy(shuffle = enabled) }
+        player?.shuffleModeEnabled = enabled
+    }
+
+    private fun RepeatMode.toExoRepeatMode(): Int = when (this) {
+        RepeatMode.OFF -> Player.REPEAT_MODE_OFF
+        RepeatMode.ALL -> Player.REPEAT_MODE_ALL
+        RepeatMode.ONE -> Player.REPEAT_MODE_ONE
     }
 
     /** 服务被销毁（用户划掉任务/系统回收）时由 Service 回调，复位启动标志 */
@@ -449,19 +462,32 @@ object PlaybackEngine {
 
     fun release() {
         stopTicker()
+        // 先记下播放位置，再释放播放器。服务被系统回收后重新打开应用时，
+        // 从这里续播同一首、同一进度，而不是回到第 0 首。
+        player?.let { exo ->
+            runCatching {
+                if (exo.mediaItemCount > 0 && exo.currentMediaItemIndex >= 0) {
+                    resumeIndex = exo.currentMediaItemIndex
+                    resumePositionMs = exo.currentPosition.coerceAtLeast(0L)
+                }
+            }
+        }
         player?.release()
         player = null
-        // 不清空 currentQueue：保留队列供 restoreQueue / togglePlayPause 快速恢复，
-        // 避免服务 onDestroy 后重新打开应用时队列丢失，导致播放按钮无反应。
+        // 不清空 currentQueue/resume 位置：保留队列供重新打开应用时快速恢复，
+        // 避免服务 onDestroy 后队列丢失、播放按钮无反应或从第 0 首重放。
         serviceStarted = false
         endHandled = false
         skipHops = 0
-        resetState()
-    }
-
-    /** 重置播放状态流，避免服务/引擎释放后 _state.isPlaying 残留为 true。 */
-    private fun resetState() {
-        _state.value = EngineState()
+        // 只回落播放态，保留当前曲、随机、循环模式——它们是用户设置，
+        // 不能因为服务被系统杀掉就被悄悄清成「关」。
+        _state.update {
+            it.copy(
+                isPlaying = false,
+                positionMs = resumePositionMs,
+                bufferedMs = 0L
+            )
+        }
     }
 
     // ---------------------------------------------------------- 播放结束处理
@@ -480,10 +506,10 @@ object PlaybackEngine {
 
         val isLastItem = exo.currentMediaItemIndex >= exo.mediaItemCount - 1
         if (exo.repeatMode == Player.REPEAT_MODE_OFF && isLastItem) {
-            // 只 seek 回起点，暂停交给 pause() 自己触发 onIsPlayingChanged 回落状态，
-            // 不再手工写 _state.isPlaying
-            exo.seekTo(0L)
+            // 先暂停再 seek：STATE_ENDED 时 playWhenReady 仍是 true，
+            // 先 seek 会瞬间重新起播，表现为「最后一首放完又从头响一下」。
             exo.pause()
+            exo.seekTo(0, 0L)
             _state.update { it.copy(positionMs = 0L) }
         }
     }

@@ -34,12 +34,12 @@ private const val CHANNEL_ID = "music_playback_v2"
 private const val LEGACY_CHANNEL_ID = "music_playback"
 private const val LEGACY_MEDIA3_CHANNEL_ID = "default_channel_id"
 
-/** 通知 id：不能和 SuperIslandHelper 的 1001 冲突，否则两条通知会互相覆盖 */
+/** 播放通知 id */
 private const val NOTIFICATION_ID = 1002
 
 /**
  * 前台播放服务：负责 MediaSession（通知栏、锁屏、耳机/车机控制）以及播放保活。
- * 在小米 HyperOS 设备上，会额外发布「万象超级岛」通知实现灵动岛样式。
+ * 系统媒体通知本身就是 HyperOS 灵动岛的数据来源，不再额外发歌曲信息横幅。
  */
 class MusicPlayerService : MediaSessionService() {
 
@@ -80,8 +80,6 @@ class MusicPlayerService : MediaSessionService() {
         // （HyperOS/MIUI 尤其激进）回收，onDestroy 里 release 掉 session，
         // 系统媒体卡片也就跟着消失了。
         addSession(session)
-
-        SuperIslandHelper.startObserving(applicationContext)
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = mediaSession
@@ -90,10 +88,11 @@ class MusicPlayerService : MediaSessionService() {
      * 前台服务需要的通知渠道，固定 IMPORTANCE_LOW：
      * - 不弹横幅、不响、不震；
      * - 通知栏媒体卡片、锁屏控制、前台服务保活都不受影响；
-     * - 不影响 SuperIslandHelper 自己的那条「灵动岛」通知。
+     * - 灵动岛由这条媒体通知驱动，无需再单独发歌曲信息通知。
      *
      * 旧渠道（music_playback / Media3 默认 default_channel_id）如果曾被创建成
      * 高优先级，importance 改不回来，所以这里直接删掉，换 v2 重新建。
+     * 旧版「歌曲名称信息横幅」渠道 music_super_island 已在 MusicApp 启动时清理。
      */
     private fun ensureSilentPlaybackChannel() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
@@ -107,7 +106,7 @@ class MusicPlayerService : MediaSessionService() {
             getString(R.string.playback_channel_name),
             NotificationManager.IMPORTANCE_LOW
         ).apply {
-            description = "播放控制与歌曲信息，仅显示在通知栏/锁屏，不弹出横幅"
+            description = "播放控制与歌曲信息，显示在通知栏/锁屏和灵动岛，不弹出横幅"
             setShowBadge(false)
             setSound(null, null)
             enableVibration(false)
@@ -130,9 +129,6 @@ class MusicPlayerService : MediaSessionService() {
     }
 
     override fun onDestroy() {
-        SuperIslandHelper.stopObserving()
-        SuperIslandHelper.cancelNotification(this)
-
         val session = mediaSession
         if (session != null) {
             // 先从 Service 上摘掉，media3 才会同步撤掉通知与前台状态

@@ -268,6 +268,15 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
             if (song != null && song.id != currentSong?.id) {
                 currentSong = song
                 loadLyrics(song)
+                // 自动/手动切歌后同步落盘当前曲目：
+                // 否则进程被杀再打开时，恢复的仍是切歌前那首 + 新歌的进度。
+                // 启动恢复队列时 currentSong 已提前指向目标曲，id 相同不会走到这里，
+                // 因此不会把已保存的播放进度冲成 0。
+                persistSource(
+                    songId = song.id,
+                    playlistId = if (currentSource == 1) currentPlaylistId else -1L,
+                    isPlaylist = currentSource == 1
+                )
             }
         }
 
@@ -371,18 +380,16 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     override fun onCleared() {
-        // 退出前兜底落盘进度 + 设置
+        // 退出前兜底落盘：进度按需存，随机/循环等设置每次都存
         val pos = PlaybackEngine.state.value.positionMs
-        if (pos > 0) {
-            viewModelScope.launch {
-                runCatching { playbackPrefs.savePosition(pos) }
-                runCatching {
-                    playbackPrefs.saveSettings(
-                        shuffle = PlaybackEngine.state.value.shuffle,
-                        repeatMode = PlaybackEngine.state.value.repeatMode,
-                        volume = volume
-                    )
-                }
+        viewModelScope.launch {
+            if (pos > 0) runCatching { playbackPrefs.savePosition(pos) }
+            runCatching {
+                playbackPrefs.saveSettings(
+                    shuffle = PlaybackEngine.state.value.shuffle,
+                    repeatMode = PlaybackEngine.state.value.repeatMode,
+                    volume = volume
+                )
             }
         }
         PlaybackEngine.onCurrentIndexChanged = null
@@ -461,7 +468,9 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
             RepeatMode.ONE -> RepeatMode.OFF
         }
         PlaybackEngine.setRepeatMode(nextMode)
-        if (nextMode == RepeatMode.ONE && PlaybackEngine.state.value.shuffle) {
+        // ExoPlayer 的「单曲循环」会压过随机播放顺序，两者同时开没有意义，
+        // 所以切到单曲循环时显式关掉随机，保证 UI 与实际行为一致。
+        if (nextMode == RepeatMode.ONE) {
             PlaybackEngine.setShuffle(false)
         }
         persistSettings()
@@ -469,10 +478,13 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
 
     fun toggleShuffle() {
         val engine = PlaybackEngine.state.value
-        if (!engine.shuffle && engine.repeatMode == RepeatMode.ONE) {
+        val nextShuffle = !engine.shuffle
+        // 反向同理：开启随机时如果正处于单曲循环，先升到列表循环，
+        // 否则随机会被单曲循环覆盖，看起来像「随机没生效」。
+        if (nextShuffle && engine.repeatMode == RepeatMode.ONE) {
             PlaybackEngine.setRepeatMode(RepeatMode.ALL)
         }
-        PlaybackEngine.setShuffle(!engine.shuffle)
+        PlaybackEngine.setShuffle(nextShuffle)
         persistSettings()
     }
 
